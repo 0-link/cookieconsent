@@ -1,7 +1,7 @@
 {
-    "name": "vanilla-cookieconsent",
+    "name": "@0-link/cookieconsent",
     "version": "3.1.0",
-    "description": "🍪 Simple cross-browser cookie-consent plugin written in vanilla js.",
+    "description": "🍪 Simple cross-browser cookie-consent plugin written in vanilla js. Fork of orestbida/cookieconsent for 0.link projects.",
     "main": "dist/cookieconsent.umd.js",
     "module": "dist/cookieconsent.esm.js",
     "files": [
@@ -21,7 +21,10 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/orestbida/cookieconsent"
+        "url": "https://github.com/0-link/cookieconsent"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com/"
     },
     "keywords": [
         "cookie",
@@ -30,9 +33,6 @@
         "banner",
         "vanilla"
     ],
-    "bugs": {
-        "url": "https://github.com/orestbida/cookieconsent/issues"
-    },
     "homepage": "https://cookieconsent.orestbida.com",
     "author": "Orest Bida",
     "license": "MIT",

@@ -1,6 +1,6 @@
 /*!
 * CookieConsent 3.1.0
-* https://github.com/orestbida/cookieconsent
+* https://github.com/0-link/cookieconsent
 * Author Orest Bida
 * Released under the MIT License
 */

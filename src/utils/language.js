@@ -1,14 +1,8 @@
 import { globalObj } from '../core/global';
-import {
-    debug,
-    elContains,
-    fetchJson,
-    addClass,
-    removeClass,
-    isString,
-    isArray,
-    isFunction
-} from './general';
+import { elContains } from './collections';
+import { debug } from './debug';
+import { addClass, removeClass } from './dom';
+import { isArray, isFunction, isString } from './type-guards';
 
 /**
  * Detect the available language. The language autodetection process prioritizes finding translations
@@ -23,7 +17,10 @@ export const getAvailableLanguage = (languageCode) => {
     if (!isString(languageCode))
         return null;
 
-    if (languageCode in globalObj._state._allTranslations)
+    const translations = globalObj._state._allTranslations;
+    const hasTranslation = (code) => Object.prototype.hasOwnProperty.call(translations, code);
+
+    if (hasTranslation(languageCode))
         return languageCode;
 
     /**
@@ -31,7 +28,7 @@ export const getAvailableLanguage = (languageCode) => {
      */
     let language = languageCode.slice(0, 2);
 
-    if (language in globalObj._state._allTranslations)
+    if (hasTranslation(language))
         return language;
 
     return null;
@@ -61,6 +58,14 @@ export const setCurrentLanguageCode = (newLanguageCode) => {
 export const getBrowserLanguageCode = () => navigator.language;
 
 /**
+ * Get the user's preferred languages, in order of preference
+ * @returns {readonly string[]}
+ */
+export const getBrowserLanguageCodes = () => navigator.languages && navigator.languages.length
+    ? navigator.languages
+    : [getBrowserLanguageCode()];
+
+/**
  * Get the lang attribute
  * @returns lang attribute
  */
@@ -77,17 +82,20 @@ export const resolveCurrentLanguageCode = () =>  {
         debug('CookieConsent [LANG]: autoDetect strategy: "' + autoDetect + '"');
 
         const detectionStrategies = {
-            browser: getBrowserLanguageCode(),
-            document: getDocumentLanguageCode()
+            browser: getBrowserLanguageCodes(),
+            document: [getDocumentLanguageCode()]
         };
 
-        /**
-         * @type {string}
-         */
-        const newLanguageCode = getAvailableLanguage(detectionStrategies[autoDetect]);
+        const languageCodes = detectionStrategies[autoDetect];
 
-        if (newLanguageCode)
-            return newLanguageCode;
+        if (isArray(languageCodes)) {
+            for (const languageCode of languageCodes) {
+                const newLanguageCode = getAvailableLanguage(languageCode);
+
+                if (newLanguageCode)
+                    return newLanguageCode;
+            }
+        }
     }
 
     /**
@@ -106,9 +114,7 @@ export const loadTranslationData = async (desiredLanguageCode) => {
     /**
      * @type {string}
      */
-    let currentLanguageCode = getAvailableLanguage(desiredLanguageCode)
-        ? desiredLanguageCode
-        : getCurrentLanguageCode();
+    let currentLanguageCode = getAvailableLanguage(desiredLanguageCode) ?? getCurrentLanguageCode();
 
     let translationData = state._allTranslations[currentLanguageCode];
 
@@ -147,5 +153,20 @@ export const handleRtlLanguage = () => {
         elContains(rtlLanguages, globalObj._state._currentLanguageCode)
             ? addClass(ccMain, 'cc--rtl')
             : removeClass(ccMain, 'cc--rtl');
+    }
+};
+
+/**
+ * Used to fetch external language files (.json)
+ * @param {string} url
+ * @returns {Promise<import('../core/global').Translation | boolean>}
+ */
+export const fetchJson = async (url) => {
+    try {
+        const response = await fetch(url);
+        return response.ok && await response.json();
+    } catch (e) {
+        console.error(e);
+        return false;
     }
 };

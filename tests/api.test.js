@@ -1,6 +1,6 @@
 import * as CookieConsent from "../src/index"
 import { globalObj } from "../src/core/global";
-import { htmlHasClass } from "./config/mocks-utils";
+import { fireClickEvent, htmlHasClass } from "./config/mocks-utils";
 
 /**
  * @type {import("../src/core/global").Api}
@@ -47,12 +47,12 @@ describe("API tests", () => {
 
     it('User preferences object should contain all the props.', () => {
         const userPreferences = api.getUserPreferences();
-        expect(userPreferences).toMatchObject({
+        expect(userPreferences).toEqual({
             acceptType: '',
             acceptedCategories: [],
             rejectedCategories: [],
-            acceptedServices: {},
-            rejectedServices: {}
+            acceptedServices: { necessary: [], analytics: [], ads: [] },
+            rejectedServices: { necessary: [], analytics: [], ads: [] }
         })
     })
 
@@ -61,6 +61,7 @@ describe("API tests", () => {
         testConfig.autoShow = false;
         await api.run(testConfig)
         expect(htmlHasClass(consentModalClassToggle)).toBe(false);
+        expect(globalObj._dom._cm.getAttribute('aria-hidden')).toBe('true');
     })
 
     it('Should return config.', () => {
@@ -116,6 +117,19 @@ describe("API tests", () => {
         api.acceptCategory('all', ['analytics']);
         expect(api.acceptedCategory('necessary')).toBe(true)
         expect(api.acceptedCategory('analytics')).toBe(false)
+    })
+
+    it('Should ignore categories that do not exist', () => {
+        api.acceptCategory(['analytics', 'does_not_exist']);
+        expect(api.acceptedCategory('analytics')).toBe(true)
+        expect(api.acceptedCategory('does_not_exist')).toBe(false)
+        expect(api.getCookie('categories')).not.toContain('does_not_exist')
+    })
+
+    it('Should reject the services of an excluded category', () => {
+        api.acceptCategory('all', ['analytics']);
+        expect(api.acceptedService('service1', 'analytics')).toBe(false)
+        expect(api.acceptedService('service2', 'analytics')).toBe(false)
     })
 
     it("Should return the plugin's cookie", () => {
@@ -305,14 +319,10 @@ describe("API tests", () => {
         expect(globalObj._state._currentLanguageCode).toBe('it');
     })
 
-    it('Should throw error when desired language is not defined', async () => {
-        fetch.mockReturnValueOnce(false);
-        try {
-            await api.setLanguage('en-IT', true);
-        } catch (ex) {
-            expect(ex).toBe(`Could not load translation for the 'en-IT' language`);
-        }
-        expect(globalObj._state._currentLanguageCode).not.toBe('en-IT');
+    it('Should return false when desired language is not defined', async () => {
+        const result = await api.setLanguage('fr');
+        expect(result).toBe(false);
+        expect(globalObj._state._currentLanguageCode).not.toBe('fr');
     })
 
     it('Should throw error when fetch fails', async () => {
@@ -411,6 +421,17 @@ describe("API tests", () => {
         expect(onAccept).toHaveBeenCalledTimes(1);
     })
 
+    it('Should not throw when loading a script whose src contains quotes', async () => {
+        const src = 'https://example.com/script.js?a="b"';
+        const existingScript = document.createElement('script');
+        existingScript.setAttribute('src', src);
+        document.head.appendChild(existingScript);
+
+        await expect(api.loadScript(src)).resolves.toBe(true);
+        expect(document.querySelectorAll('script[src]').length).toBe(1);
+        existingScript.remove();
+    })
+
     it('Should call service onReject once, if previously accepted', async () => {
         api.reset(true);
         const onReject = jest.fn();
@@ -425,5 +446,122 @@ describe("API tests", () => {
         api.acceptService([], 'analytics');
         api.acceptCategory([]);
         expect(onReject).toHaveBeenCalledTimes(1)
+    })
+
+    it('Should accept the services of a category without a section in the preferences modal', async () => {
+        api.reset(true);
+        testConfig.categories.hidden = {
+            services: {
+                h1: {},
+                h2: {}
+            }
+        };
+        await api.run(testConfig);
+        api.showPreferences();
+
+        expect(() => api.acceptService('h1', 'hidden')).not.toThrow();
+        expect(api.acceptedService('h1', 'hidden')).toBe(true);
+        expect(api.acceptedService('h2', 'hidden')).toBe(false);
+
+        expect(() => api.acceptService(['h2'], 'hidden')).not.toThrow();
+        expect(api.acceptedService('h1', 'hidden')).toBe(false);
+        expect(api.acceptedService('h2', 'hidden')).toBe(true);
+
+        expect(() => api.acceptService([], 'hidden')).not.toThrow();
+        expect(api.acceptedCategory('hidden')).toBe(false);
+    })
+
+    it('Should keep the state of a category without a section when the preferences modal exists', async () => {
+        api.reset(true);
+        testConfig.categories.hidden = {
+            services: {
+                h1: {},
+                h2: {}
+            }
+        };
+        await api.run(testConfig);
+        api.showPreferences();
+
+        api.acceptService('h1', 'hidden');
+        expect(api.acceptedCategory('hidden')).toBe(true);
+        expect(api.getCookie('categories')).toContain('hidden');
+
+        fireClickEvent(globalObj._dom._pmSavePreferencesBtn);
+        expect(api.acceptedCategory('hidden')).toBe(true);
+        expect(api.acceptedService('h1', 'hidden')).toBe(true);
+
+        api.acceptCategory([]);
+        api.showPreferences();
+        fireClickEvent(globalObj._dom._pmSavePreferencesBtn);
+        expect(api.acceptedCategory('hidden')).toBe(false);
+    })
+
+    it('Should not accept the default categories again after they were rejected', async () => {
+        api.reset(true);
+        testConfig.lazyHtmlGeneration = true;
+        testConfig.categories.ads.enabled = true;
+        await api.run(testConfig);
+
+        api.acceptCategory([]);
+        expect(api.acceptedCategory('ads')).toBe(false);
+
+        api.acceptService('service1', 'analytics');
+        expect(api.acceptedCategory('analytics')).toBe(true);
+        expect(api.acceptedCategory('ads')).toBe(false);
+
+        api.acceptCategory();
+        expect(api.acceptedCategory('ads')).toBe(false);
+    })
+
+    it('Should accept the default categories with acceptCategory() before the first consent', async () => {
+        api.reset(true);
+        testConfig.lazyHtmlGeneration = true;
+        await api.run(testConfig);
+
+        api.acceptCategory();
+        expect(api.acceptedCategory('analytics')).toBe(true);
+        expect(api.acceptedCategory('ads')).toBe(false);
+    })
+
+    it('Should run the onAccept callback of a readOnly service on the first consent', async () => {
+        api.reset(true);
+        window.__service1Enabled = false;
+        await api.run(testConfig);
+
+        api.acceptCategory([]);
+        expect(window.__service1Enabled).toBe(true);
+    })
+
+    it('Should run the scripts of a valid consent when the translation fails to load', async () => {
+        api.acceptCategory('all');
+        api.reset();
+
+        const onConsent = jest.fn();
+        window.addEventListener('cc:onConsent', onConsent);
+        window.__service1Enabled = false;
+        testConfig.language.translations.en = './en.json';
+        fetch.mockImplementationOnce(() => Promise.resolve({ ok: false }));
+
+        await expect(api.run(testConfig)).rejects.toBe(`Could not load translation for the 'en' language`);
+        expect(api.validConsent()).toBe(true);
+        expect(window.__service1Enabled).toBe(true);
+        expect(onConsent).toHaveBeenCalledTimes(1);
+
+        window.removeEventListener('cc:onConsent', onConsent);
+    })
+
+    it('Should not show the consent modal if the consent is given while the translation loads', async () => {
+        api.reset(true);
+
+        const translation = testConfig.language.translations.en;
+        testConfig.autoShow = true;
+        testConfig.language.translations.en = () => Promise.resolve(translation);
+
+        const running = api.run(testConfig);
+        api.acceptCategory('all');
+        await running;
+
+        expect(api.validConsent()).toBe(true);
+        expect(htmlHasClass(consentModalClassToggle)).toBe(false);
     })
 })

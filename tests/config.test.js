@@ -42,6 +42,30 @@ describe("Check modals' html generation under different settings", () => {
         expect(htmlHasClass('show--consent')).toBe(false);
     })
 
+    it('Should not generate consent modal markup when autoShow=false and lazyHtmlGeneration=true', async () => {
+        const prevAutoShow = testConfig.autoShow;
+        const prevLazyHtmlGeneration = testConfig.lazyHtmlGeneration;
+
+        try {
+            api.eraseCookies('cc_cookie');
+            testConfig.autoShow = false;
+            testConfig.lazyHtmlGeneration = true;
+            await api.run(testConfig);
+
+            expect(api.validConsent()).toBe(false);
+            expect(htmlHasClass('show--consent')).toBe(false);
+            expect(document.querySelector('#cc-main .cm')).toBeNull();
+
+            api.show();
+
+            expect(document.querySelector('#cc-main .cm')).toBeInstanceOf(HTMLElement);
+            expect(htmlHasClass('show--consent')).toBe(true);
+        } finally {
+            testConfig.autoShow = prevAutoShow;
+            testConfig.lazyHtmlGeneration = prevLazyHtmlGeneration;
+        }
+    })
+
     it('Plugin should stop if bot is detected', async () => {
         setUserAgent(botUserAgent);
         testConfig.hideFromBots = true;
@@ -83,10 +107,65 @@ describe("Check modals' html generation under different settings", () => {
         expect(window.__service1Enabled).toBe(true);
     })
 
+    it('Should not duplicate the services of a readOnly category when mode="opt-out"', async () => {
+        testConfig.mode = 'opt-out';
+        api.eraseCookies('cc_cookie');
+        await api.run(testConfig);
+        expect(api.getUserPreferences().acceptedServices.necessary).toEqual(['service1']);
+    })
+
+    it('Should list only the services of the default categories before the consent when mode="opt-out"', async () => {
+        testConfig.mode = 'opt-out';
+        testConfig.categories.analytics.enabled = false;
+        api.eraseCookies('cc_cookie');
+        await api.run(testConfig);
+        expect(api.getUserPreferences()).toEqual({
+            acceptType: '',
+            acceptedCategories: ['necessary'],
+            rejectedCategories: [],
+            acceptedServices: { necessary: ['service1'], analytics: [], ads: [] },
+            rejectedServices: { necessary: [], analytics: [], ads: [] }
+        });
+    })
+
+    it('Should report the default categories and services as accepted before the consent when mode="opt-out"', async () => {
+        testConfig.mode = 'opt-out';
+        testConfig.categories.analytics.enabled = true;
+        api.eraseCookies('cc_cookie');
+        await api.run(testConfig);
+
+        expect(api.validConsent()).toBe(false);
+        expect(api.acceptedCategory('necessary')).toBe(true);
+        expect(api.acceptedCategory('analytics')).toBe(true);
+        expect(api.acceptedCategory('ads')).toBe(false);
+        expect(api.acceptedService('service1', 'analytics')).toBe(true);
+    })
+
+    it('Should not report any category as accepted before the consent when mode="opt-in"', async () => {
+        testConfig.mode = 'opt-in';
+        api.eraseCookies('cc_cookie');
+        await api.run(testConfig);
+
+        expect(api.acceptedCategory('necessary')).toBe(false);
+        expect(api.acceptedCategory('analytics')).toBe(false);
+        expect(api.acceptedService('service1', 'analytics')).toBe(false);
+    })
+
     it('equalWeightButtons option should be enabled by default', async () => {
         delete testConfig.guiOptions;
         await api.run(testConfig);
         const necessaryBtnClasses = [...document.querySelector('.cm__btn[data-role="necessary"]').classList];
         expect(necessaryBtnClasses).not.toContain('cm__btn--secondary');
+    })
+
+    it('Should run when no categories are defined', async () => {
+        const configWithoutCategories = { ...testConfig };
+        delete configWithoutCategories.categories;
+
+        await api.run(configWithoutCategories);
+        api.showPreferences();
+        api.acceptCategory('all');
+        expect(api.validConsent()).toBe(true);
+        expect(api.getUserPreferences().acceptedCategories).toEqual([]);
     })
 })

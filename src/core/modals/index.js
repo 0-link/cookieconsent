@@ -1,5 +1,6 @@
 import { globalObj } from '../global';
-import { createNode, addDataButtonListeners } from '../../utils/general';
+import { addDataButtonListeners } from '../../utils/data-buttons';
+import { createNode } from '../../utils/dom';
 import { createConsentModal } from './consentModal';
 import { createPreferencesModal } from './preferencesModal';
 import { DIV_TAG } from '../../utils/constants';
@@ -26,7 +27,7 @@ export const createMainContainer = () => {
 export const generateHtml = (api) => {
     addDataButtonListeners(null, api, createPreferencesModal, createMainContainer);
 
-    if (globalObj._state._invalidConsent)
+    if (globalObj._state._invalidConsent && !globalObj._config.lazyHtmlGeneration)
         createConsentModal(api, createMainContainer);
 
     if (!globalObj._config.lazyHtmlGeneration)

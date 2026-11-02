@@ -1,29 +1,29 @@
 import {
-    createNode,
-    setAttribute,
-    removeAttribute,
-    appendChild,
-    addClass,
-    removeClass,
-    debug,
     getCurrentCategoriesState,
-    elContains,
-    setAcceptedCategories,
-    isString,
-    retrieveRejectedServices,
-    isArray,
-    isObject,
-    focus,
-    getActiveElement,
+    isGpcOptOutActive,
     resolveEnabledCategories,
     resolveEnabledServices,
-    updateModalToggles,
-    toggleDisableInteraction,
-    fireEvent,
-    getKeys,
-    focusAfterTransition,
-    deepCopy
-} from '../utils/general';
+    getCurrentServicesState,
+    setAcceptedCategories,
+    syncModalToggles,
+    updateModalToggles
+} from '../utils/categories';
+import { deepCopy, elContains, getKeys } from '../utils/collections';
+import { debug } from '../utils/debug';
+import {
+    addClass,
+    appendChild,
+    createNode,
+    focus,
+    getActiveElement,
+    getAttribute,
+    removeAttribute,
+    removeClass,
+    setAttribute,
+    toggleDisableInteraction
+} from '../utils/dom';
+import { fireEvent } from '../utils/events';
+import { isArray, isObject, isString } from '../utils/type-guards';
 
 import { manageExistingScripts, retrieveEnabledCategoriesAndServices } from '../utils/scripts';
 
@@ -45,7 +45,6 @@ import {
     getCurrentLanguageCode,
     handleRtlLanguage,
     loadTranslationData,
-    setCurrentLanguageCode,
     getAvailableLanguage
 } from '../utils/language';
 
@@ -74,15 +73,28 @@ import {
 import { localStorageManager } from '../utils/localstorage';
 
 /**
+ * @param {string[]|string} categories
+ * @param {string[]} excludedCategories
+ * @param {boolean} [afterNextPaint] run scripts and callbacks after the next paint
+ */
+const acceptAndSave = (categories, excludedCategories, afterNextPaint) => {
+    resolveEnabledCategories(categories, excludedCategories);
+    resolveEnabledServices();
+    saveCookiePreferences(afterNextPaint);
+};
+
+/**
  * Accept API
  * @param {string[]|string} categories - Categories to accept
  * @param {string[]} [excludedCategories]
  */
-export const acceptCategory = (categories, excludedCategories = []) => {
-    resolveEnabledCategories(categories, excludedCategories);
-    resolveEnabledServices();
-    saveCookiePreferences();
-};
+export const acceptCategory = (categories, excludedCategories = []) => acceptAndSave(categories, excludedCategories);
+
+/**
+ * True if the accepted categories/services apply:
+ * the consent is valid, or the defaults are enabled (opt-out)
+ */
+const acceptedStateApplies = () => !globalObj._state._invalidConsent || globalObj._config.mode === OPT_OUT_MODE;
 
 /**
  * Returns true if cookie category is accepted
@@ -90,7 +102,7 @@ export const acceptCategory = (categories, excludedCategories = []) => {
  */
 export const acceptedCategory = (category) => {
 
-    const acceptedCategories = !globalObj._state._invalidConsent
+    const acceptedCategories = acceptedStateApplies()
         ? globalObj._state._acceptedCategories
         : [];
 
@@ -115,10 +127,7 @@ export const acceptService = (service, category) => {
         return false;
     }
 
-    //{{START: GUI}}
     updateModalToggles(service, category);
-    //{{END: GUI}}
-
     acceptCategory();
 };
 
@@ -129,7 +138,7 @@ export const acceptService = (service, category) => {
  * @param {string} category
  */
 export const acceptedService = (service, category) => {
-    const acceptedServices = !globalObj._state._invalidConsent
+    const acceptedServices = acceptedStateApplies()
         ? (globalObj._state._acceptedServices[category] || [])
         : [];
 
@@ -187,21 +196,17 @@ export const show = (createModal) => {
     if (_state._consentModalVisible)
         return;
 
-    if (!_state._consentModalExists) {
-        if (createModal) {
-            createConsentModal(miniAPI, createMainContainer);
-        } else {
-            return;
-        }
-    }
+    if (!_state._consentModalExists && (createModal || _state._invalidConsent))
+        createConsentModal(miniAPI, createMainContainer);
+
+    if (!_state._consentModalExists)
+        return;
 
     _state._consentModalVisible = true;
     _state._lastFocusedElemBeforeModal = getActiveElement();
 
     if (_state._disablePageInteraction)
         toggleDisableInteraction(true);
-
-    focusAfterTransition(_dom._cm, 1);
 
     addClass(_dom._rootEl, TOGGLE_CONSENT_MODAL_CLASS);
     removeAttribute(_dom._cm, ARIA_HIDDEN);
@@ -210,8 +215,10 @@ export const show = (createModal) => {
      */
     setTimeout(() => {
         addClass(_dom._cmContainer, 'cc--anim');
-        focus(globalObj._dom._cmDivTabindex);
     }, 100);
+    setTimeout(() => {
+        focus(_dom._cmDivTabindex, false, true);
+    }, 200);
 
     debug('CookieConsent [TOGGLE]: show consentModal');
 
@@ -235,7 +242,7 @@ export const hide = () => {
     /**
      * Fix focus restoration to body with Chrome
      */
-    focus(_dom._focusSpan, true);
+    focus(_dom._focusSpan, true, true);
 
     removeClass(_dom._rootEl, TOGGLE_CONSENT_MODAL_CLASS);
     setAttribute(_dom._cm, ARIA_HIDDEN, 'true');
@@ -260,13 +267,16 @@ export const hide = () => {
  * Show preferences modal
  */
 export const showPreferences = () => {
-    const state = globalObj._state;
+    const { _dom, _state: state } = globalObj;
 
     if (state._preferencesModalVisible)
         return;
 
     if (!state._preferencesModalExists)
         createPreferencesModal(miniAPI, createMainContainer);
+
+    if (!state._preferencesModalExists)
+        return;
 
     state._preferencesModalVisible = true;
 
@@ -277,17 +287,15 @@ export const showPreferences = () => {
         state._lastFocusedModalElement = getActiveElement();
     }
 
-    focusAfterTransition(globalObj._dom._pm, 2);
-
-    addClass(globalObj._dom._rootEl, TOGGLE_PREFERENCES_MODAL_CLASS);
-    removeAttribute(globalObj._dom._pm, ARIA_HIDDEN);
+    addClass(_dom._rootEl, TOGGLE_PREFERENCES_MODAL_CLASS);
+    removeAttribute(_dom._pm, ARIA_HIDDEN);
 
     /**
      * Set focus to preferencesModal
      */
     setTimeout(() => {
-        focus(globalObj._dom._pmDivTabindex);
-    }, 100);
+        focus(_dom._pmDivTabindex, false, true);
+    }, 200);
 
     debug('CookieConsent [TOGGLE]: show preferencesModal');
 
@@ -297,33 +305,7 @@ export const showPreferences = () => {
 /**
  * https://github.com/orestbida/cookieconsent/issues/481
  */
-const discardUnsavedPreferences = () => {
-    const consentIsValid = validConsent();
-    const allDefinedCategories = globalObj._state._allDefinedCategories;
-    const categoryInputs = globalObj._dom._categoryCheckboxInputs;
-    const serviceInputs = globalObj._dom._serviceCheckboxInputs;
-
-    /**
-     * @param {string} category
-     */
-    const categoryEnabledByDefault = (category) => elContains(globalObj._state._defaultEnabledCategories, category);
-
-    for (const category in categoryInputs) {
-        const isReadOnly = !!allDefinedCategories[category].readOnly;
-
-        categoryInputs[category].checked = isReadOnly || (consentIsValid
-            ? acceptedCategory(category)
-            : categoryEnabledByDefault(category)
-        );
-
-        for (const service in serviceInputs[category]) {
-            serviceInputs[category][service].checked = isReadOnly || (consentIsValid
-                ? acceptedService(service, category)
-                : categoryEnabledByDefault(category)
-            );
-        }
-    }
-};
+const discardUnsavedPreferences = () => syncModalToggles(validConsent());
 
 /**
  * Hide preferences modal
@@ -341,7 +323,7 @@ export const hidePreferences = () => {
     /**
      * Fix focus restoration to body with Chrome
      */
-    focus(globalObj._dom._pmFocusSpan, true);
+    focus(globalObj._dom._pmFocusSpan, true, true);
 
     removeClass(globalObj._dom._rootEl, TOGGLE_PREFERENCES_MODAL_CLASS);
     setAttribute(globalObj._dom._pm, ARIA_HIDDEN, 'true');
@@ -350,7 +332,7 @@ export const hidePreferences = () => {
      * If consent modal is visible, focus him (instead of page document)
      */
     if (state._consentModalVisible) {
-        focus(state._lastFocusedModalElement);
+        focus(state._lastFocusedModalElement, false, true);
         state._lastFocusedModalElement = null;
     } else {
         /**
@@ -365,12 +347,17 @@ export const hidePreferences = () => {
     fireEvent(globalObj._customEvents._onModalHide, PREFERENCES_MODAL_NAME);
 };
 
-var miniAPI = {
+const miniAPI = {
     show,
     hide,
     showPreferences,
     hidePreferences,
-    acceptCategory
+    /**
+     * Used by the modal buttons, so that scripts and
+     * callbacks don't delay the click's response (INP)
+     * @param {string[]|string} [categories]
+     */
+    acceptCategory: (categories) => acceptAndSave(categories, [], true)
 };
 
 /**
@@ -395,13 +382,14 @@ export const setLanguage = async (newLanguageCode, forceUpdate) => {
         if (!loaded)
             return false;
 
-        setCurrentLanguageCode(newLanguageCode);
-
         if (state._consentModalExists)
             createConsentModal(miniAPI, createMainContainer);
 
-        if (state._preferencesModalExists)
+        if (state._preferencesModalExists) {
+            // The new toggles show the saved state
+            discardUnsavedPreferences();
             createPreferencesModal(miniAPI, createMainContainer);
+        }
 
         handleRtlLanguage();
 
@@ -418,15 +406,15 @@ export const setLanguage = async (newLanguageCode, forceUpdate) => {
  * @returns {import("./global").UserPreferences}
  */
 export const getUserPreferences = () => {
-    const { _acceptType, _acceptedServices } = globalObj._state;
     const { accepted, rejected } = getCurrentCategoriesState();
+    const services = getCurrentServicesState();
 
     return deepCopy({
-        acceptType: _acceptType,
+        acceptType: globalObj._state._acceptType,
         acceptedCategories: accepted,
         rejectedCategories: rejected,
-        acceptedServices: _acceptedServices,
-        rejectedServices: retrieveRejectedServices()
+        acceptedServices: services.accepted,
+        rejectedServices: services.rejected
     });
 };
 
@@ -440,7 +428,7 @@ export const loadScript = (src, attrs) => {
     /**
      * @type {HTMLScriptElement}
      */
-    let script = document.querySelector('script[src="' + src + '"]');
+    let script = [...document.scripts].find(el => getAttribute(el, 'src') === src);
 
     return new Promise((resolve) => {
         if (script)
@@ -557,11 +545,29 @@ export const getConfig = (field) => {
  */
 export const validConsent = () => !globalObj._state._invalidConsent;
 
+/**
+ * Date from a value saved in the cookie, undefined if missing or invalid
+ * @param {string} [value]
+ * @returns {Date|undefined}
+ */
+const parseDate = (value) => {
+    const date = value && new Date(value);
+    return date && !isNaN(date) ? date : undefined;
+};
+
 const retrieveState = () => {
     const state = globalObj._state;
     const config = globalObj._config;
 
-    const cookieValue = getPluginCookie();
+    let cookieValue = getPluginCookie();
+
+    /**
+     * An expired localStorage item counts as no consent, like an expired cookie
+     */
+    if (config.cookie.useLocalStorage && new Date().getTime() > (cookieValue.expirationTime || 0)) {
+        localStorageManager._removeItem(config.cookie.name);
+        cookieValue = {};
+    }
 
     const {
         categories,
@@ -581,13 +587,8 @@ const retrieveState = () => {
     // If "_consentId" is present => assume that consent was previously given
     const validConsentId = !!consentId && isString(consentId);
 
-    // Retrieve "_consentTimestamp"
-    state._consentTimestamp = consentTimestamp;
-    state._consentTimestamp && (state._consentTimestamp = new Date(consentTimestamp));
-
-    // Retrieve "_lastConsentTimestamp"
-    state._lastConsentTimestamp = lastConsentTimestamp;
-    state._lastConsentTimestamp && (state._lastConsentTimestamp = new Date(lastConsentTimestamp));
+    state._consentTimestamp = parseDate(consentTimestamp);
+    state._lastConsentTimestamp = parseDate(lastConsentTimestamp);
 
     // Retrieve "data"
     state._cookieData = typeof data !== 'undefined'
@@ -604,14 +605,6 @@ const retrieveState = () => {
         || !state._lastConsentTimestamp
         || !validCategories;
 
-    /**
-     * If localStorage is enabled, also check the stored `expirationTime`
-     */
-    if (config.cookie.useLocalStorage && !state._invalidConsent) {
-        state._invalidConsent = new Date().getTime() > (cookieValue.expirationTime || 0);
-        state._invalidConsent && (localStorageManager._removeItem(config.cookie.name));
-    }
-
     debug('CookieConsent [STATUS] valid consent:', !state._invalidConsent);
     retrieveEnabledCategoriesAndServices();
 
@@ -620,16 +613,27 @@ const retrieveState = () => {
      * and calculate acceptType
      */
     if (!state._invalidConsent) {
-        state._acceptedServices = {
-            ...state._acceptedServices,
-            ...services
-        };
+        /**
+         * Ignore categories and services that are no longer in the config;
+         * readOnly categories always have all their services accepted
+         */
+        for (const categoryName of state._allCategoryNames) {
+            const savedServices = services && services[categoryName];
+            const definedServices = getKeys(state._allDefinedServices[categoryName]);
+
+            if (elContains(state._readOnlyCategories, categoryName))
+                state._acceptedServices[categoryName] = definedServices;
+            else if (isArray(savedServices))
+                state._acceptedServices[categoryName] = savedServices.filter(service => elContains(definedServices, service));
+            else if (!elContains(categories, categoryName))
+                state._acceptedServices[categoryName] = [];
+        }
 
         state._enabledServices = {...state._acceptedServices};
 
         setAcceptedCategories([
             ...state._readOnlyCategories,
-            ...categories
+            ...categories.filter(category => elContains(state._allCategoryNames, category))
         ]);
     } else {
         if (config.mode === OPT_OUT_MODE) {
@@ -661,29 +665,38 @@ export const run = async (userConfig) => {
         if (_state._botAgentDetected)
             return;
 
-        retrieveState(userConfig);
+        retrieveState();
 
         const consentIsValid = validConsent();
 
         //{{START: GUI}}
-        const translationLoaded = await loadTranslationData();
+        let translationError;
 
-        if (!translationLoaded)
-            return false;
+        // The scripts must run even if the translation can't be loaded
+        const translationLoaded = await loadTranslationData().catch((error) => {
+            translationError = error;
+        });
 
-        generateHtml(miniAPI);
+        if (translationLoaded) {
+            generateHtml(miniAPI);
 
-        if (_config.autoShow && !consentIsValid)
-            show(true);
+            // The consent may have been given while the translation was loading
+            if (_config.autoShow && !validConsent() && !isGpcOptOutActive())
+                show(true);
+        }
         //{{END: GUI}}
 
         if (consentIsValid) {
             manageExistingScripts();
-            return fireEvent(_customEvents._onConsent);
+            fireEvent(_customEvents._onConsent);
+        } else if (_config.mode === OPT_OUT_MODE) {
+            manageExistingScripts();
         }
 
-        if (_config.mode === OPT_OUT_MODE)
-            manageExistingScripts(_state._defaultEnabledCategories);
+        //{{START: GUI}}
+        if (translationError)
+            throw translationError;
+        //{{END: GUI}}
     }
 };
 

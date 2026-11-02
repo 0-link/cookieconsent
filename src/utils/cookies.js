@@ -2,19 +2,19 @@ import { globalObj } from '../core/global';
 import { OPT_OUT_MODE, OPT_IN_MODE } from './constants';
 import { manageExistingScripts } from './scripts';
 
+import { syncModalToggles } from './categories';
 import {
-    debug,
-    indexOf,
-    uuidv4,
-    getRemainingExpirationTimeMS,
-    getExpiresAfterDaysValue,
-    elContains,
-    deepCopy,
-    fireEvent,
     arrayDiff,
-    safeRun
-} from './general';
+    deepCopy,
+    elContains,
+    indexOf
+} from './collections';
+import { debug } from './debug';
+import { fireEvent } from './events';
+import { safeRun } from './safe-run';
+import { isFunction, isObject } from './type-guards';
 import { localStorageManager } from './localstorage';
+import { afterPaint } from './dom';
 
 /**
  * @param {boolean} [isFirstConsent]
@@ -67,7 +67,8 @@ export const autoclearCookiesHelper = (isFirstConsent) => {
      */
     for (const categoryName in state._lastChangedServices) {
         for (const serviceName of state._lastChangedServices[categoryName]) {
-            const serviceCookies = state._allDefinedServices[categoryName][serviceName].cookies;
+            const service = state._allDefinedServices[categoryName][serviceName];
+            const serviceCookies = service && service.cookies;
             const serviceIsDisabled = !elContains(state._acceptedServices[categoryName], serviceName);
 
             if (!serviceIsDisabled || !serviceCookies)
@@ -106,7 +107,10 @@ export const autoclearCookiesHelper = (isFirstConsent) => {
     }
 };
 
-export const saveCookiePreferences = () => {
+/**
+ * @param {boolean} [afterNextPaint] run scripts and callbacks after the next paint
+ */
+export const saveCookiePreferences = (afterNextPaint) => {
     const state = globalObj._state;
 
     /**
@@ -133,25 +137,7 @@ export const saveCookiePreferences = () => {
     }
 
     //{{START: GUI}}
-    const categoryToggles = globalObj._dom._categoryCheckboxInputs;
-
-    /**
-     * If the category is accepted check checkbox,
-     * otherwise uncheck it
-     */
-    for (const categoryName in categoryToggles) {
-        categoryToggles[categoryName].checked = elContains(state._acceptedCategories, categoryName);
-    }
-
-    for (const categoryName of state._allCategoryNames) {
-        const servicesToggles = globalObj._dom._serviceCheckboxInputs[categoryName];
-        const enabledServices = state._acceptedServices[categoryName];
-
-        for (const serviceName in servicesToggles) {
-            const serviceInput = servicesToggles[serviceName];
-            serviceInput.checked = elContains(enabledServices, serviceName);
-        }
-    }
+    syncModalToggles(true);
     //{{END: GUI}}
 
     if (!state._consentTimestamp)
@@ -199,16 +185,33 @@ export const saveCookiePreferences = () => {
 
         if (isAutoClearEnabled && shouldClearCookies)
             autoclearCookiesHelper(isFirstConsent);
-
-        manageExistingScripts();
     }
+
+    afterNextPaint
+        ? afterPaint(() => state === globalObj._state && runConsentEffects(isFirstConsent, stateChanged))
+        : runConsentEffects(isFirstConsent, stateChanged);
+};
+
+/**
+ * Enable/disable scripts, fire the consent callbacks and reload the page if needed
+ * @param {boolean} isFirstConsent
+ * @param {boolean} stateChanged
+ */
+const runConsentEffects = (isFirstConsent, stateChanged) => {
+    const state = globalObj._state;
+
+    if (isFirstConsent || stateChanged)
+        manageExistingScripts();
 
     if (isFirstConsent) {
         fireEvent(globalObj._customEvents._onFirstConsent);
         fireEvent(globalObj._customEvents._onConsent);
 
-        if (globalObj._config.mode === OPT_IN_MODE)
+        // Nothing ran before the first consent, so there is nothing to reload
+        if (globalObj._config.mode === OPT_IN_MODE) {
+            state._reloadPage = false;
             return;
+        }
     }
 
     if (stateChanged)
@@ -262,9 +265,10 @@ export const setCookie = (useRemainingExpirationTime) => {
 
     /**
      * Set "domain" only if hostname contains a dot (e.g domain.com)
-     * to ensure that cookie works with 'localhost'
+     * to ensure that cookie works with 'localhost'.
+     * A falsy domain leaves it out (cookie not shared with subdomains)
      */
-    if (elContains(hostname, '.'))
+    if (domain && elContains(hostname, '.'))
         cookieStr += '; Domain=' + domain;
 
     if (secure && protocol === 'https:')
@@ -290,9 +294,9 @@ export const parseCookie = (value, skipDecode) => {
     parsedValue = safeRun(() => JSON.parse(skipDecode
         ? value
         : decodeURIComponent(value)
-    ), true) || {};
+    ), true);
 
-    return parsedValue;
+    return isObject(parsedValue) ? parsedValue : {};
 };
 
 /**
@@ -305,7 +309,7 @@ export const eraseCookiesHelper = (cookies, customPath, customDomain) => {
     if (cookies.length === 0)
         return;
 
-    const domain = customDomain || globalObj._config.cookie.domain;
+    const domain = customDomain || globalObj._config.cookie.domain || location.hostname;
     const path = customPath || globalObj._config.cookie.path;
     const isWwwSubdomain = domain.slice(0, 4) === 'www.';
     const mainDomain = isWwwSubdomain && domain.substring(4);
@@ -367,7 +371,8 @@ export const getPluginCookie = (customName) => {
  * @returns {string}
  */
 export const getSingleCookie = (name, getValue) => {
-    const found = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const found = document.cookie.match('(^|;)\\s*' + escapedName + '\\s*=\\s*([^;]+)');
 
     return found
         ? (getValue ? found.pop() : name)
@@ -403,4 +408,40 @@ export const getAllCookies = (regex) => {
     }
 
     return cookieNames;
+};
+
+/**
+ * Generate RFC4122-compliant UUIDs.
+ * https://stackoverflow.com/questions/105034/how-to-create-a-guid-uuid?page=1&tab=votes#tab-top
+ * @returns {string} unique uuid string
+ */
+export const uuidv4 = () => {
+    return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, (c) => {
+        return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16);
+    });
+};
+
+/**
+ * Calculate the existing cookie's remaining time until expiration (in milliseconds)
+ */
+export const getRemainingExpirationTimeMS = () => {
+    const lastTimestamp = globalObj._state._lastConsentTimestamp;
+
+    const elapsedTimeMilliseconds = lastTimestamp
+        ? new Date() - lastTimestamp
+        : 0;
+
+    return getExpiresAfterDaysValue()*86400000 - elapsedTimeMilliseconds;
+};
+
+/**
+ * Helper function to retrieve cookie duration
+ * @returns {number}
+ */
+export const getExpiresAfterDaysValue = () => {
+    const expiresAfterDays = globalObj._config.cookie.expiresAfterDays;
+
+    return isFunction(expiresAfterDays)
+        ? expiresAfterDays(globalObj._state._acceptType)
+        : expiresAfterDays;
 };

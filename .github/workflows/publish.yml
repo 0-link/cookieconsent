@@ -1,36 +1,142 @@
-name: NPM Registry
+name: Publish PRIVATE GitHub Package
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: 'Exact package version to publish (for this release: 3.2.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cookieconsent-private-publication
+  cancel-in-progress: false
 
 jobs:
-  push-to-npm-registry-as-latest:
-    if: "!github.event.release.prerelease"
+  publish:
+    if: github.ref == 'refs/heads/main' && github.repository == '0-link/cookieconsent'
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-node@v3
-      with:
-        node-version: "18"
-    - uses: JS-DevTools/npm-publish@v2
-      with:
-        token: ${{ secrets.NPM_TOKEN }}
-        access: public
-        tag: latest
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-  push-to-npm-registry-as-next:
-    if: "github.event.release.prerelease"
-    runs-on: ubuntu-latest
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
-    steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-node@v3
-      with:
-        node-version: "18"
-    - uses: JS-DevTools/npm-publish@v2
-      with:
-        token: ${{ secrets.NPM_TOKEN }}
-        access: public
-        tag: next
+      - name: Check release identity before installing
+        run: node scripts/package-preflight.mjs --manifest-only
+
+      - name: Enable the pinned package manager
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.17.0 --activate
+          test "$(corepack pnpm --version)" = "11.17.0"
+
+      - name: Install without lifecycle scripts
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Lint
+        run: corepack pnpm lint
+
+      - name: Test
+        run: corepack pnpm test
+
+      - name: Build
+        run: corepack pnpm build
+
+      - name: Exercise validator rejection cases
+        run: node scripts/package-preflight.mjs --self-test
+
+      - name: Pack and validate before authenticating
+        id: pack
+        run: node scripts/package-preflight.mjs
+        env:
+          PACK_DIR: ${{ runner.temp }}/cookieconsent-pack
+
+      # Only this trusted main-only step receives a registry credential.
+      - name: Check private access and publish the validated tarball
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          TARBALL_SHA256: ${{ steps.pack.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth_dir="$(mktemp -d "$RUNNER_TEMP/cookieconsent-auth.XXXXXX")"
+          trap 'rm -rf "$auth_dir"' EXIT
+          umask 077
+          printf '%s\n' \
+            '@0-link:registry=https://npm.pkg.github.com' \
+            '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' \
+            > "$auth_dir/.npmrc"
+          export NPM_CONFIG_USERCONFIG="$auth_dir/.npmrc"
+          # Run outside the checkout: no project npm configuration or lifecycle hooks.
+          cd "$auth_dir"
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+
+          const registry = 'https://npm.pkg.github.com';
+          const name = '@0-link/cookieconsent';
+          const version = process.env.EXPECTED_VERSION;
+          const tarball = process.env.TARBALL;
+          const digest = createHash('sha256').update(readFileSync(tarball)).digest('hex');
+          if (digest !== process.env.TARBALL_SHA256) throw new Error('Validated tarball changed');
+
+          // Preserve the existing private package; never create one or change access.
+          // Listing must succeed: an API permission/network error is never "not found".
+          let existing;
+          for (let page = 1; ; page++) {
+            const response = await fetch(
+              `https://api.github.com/orgs/0-link/packages?package_type=npm&per_page=100&page=${page}`,
+              { headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${process.env.NODE_AUTH_TOKEN}`,
+                'X-GitHub-Api-Version': '2022-11-28'
+              }}
+            );
+            if (!response.ok) throw new Error(`Package access check failed: HTTP ${response.status}`);
+            const packages = await response.json();
+            if (!Array.isArray(packages)) throw new Error('Invalid package access response');
+            existing = packages.find(pkg => pkg.name === 'cookieconsent' || pkg.name === name);
+            if (existing || packages.length < 100) break;
+          }
+          if (!existing) {
+            throw new Error('Existing package is missing or inaccessible; refusing to create a package');
+          }
+          if (existing.visibility !== 'private' ||
+              existing.repository?.full_name !== '0-link/cookieconsent') {
+            throw new Error('Existing package must be PRIVATE and linked to 0-link/cookieconsent');
+          }
+
+          const view = spawnSync('npm', [
+            'view', `${name}@${version}`, 'version', '--json', `--registry=${registry}`
+          ], { encoding: 'utf8' });
+          if (view.error || view.signal) throw new Error('Registry lookup could not run');
+          if (view.status === 0) throw new Error(`${name}@${version} already exists; refusing to overwrite`);
+          let error;
+          try { error = JSON.parse(view.stdout).error; } catch {}
+          if (error?.code !== 'E404') {
+            throw new Error(`Registry lookup failed (${error?.code ?? view.status}); publication aborted`);
+          }
+          const published = spawnSync('npm', [
+            'publish', tarball, '--ignore-scripts', `--registry=${registry}`, '--tag=latest'
+          ], { stdio: 'inherit' });
+          if (published.error || published.signal || published.status !== 0) {
+            throw new Error('GitHub Packages publication failed');
+          }
+          NODE

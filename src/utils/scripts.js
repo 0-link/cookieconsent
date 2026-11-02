@@ -1,5 +1,14 @@
 import { globalObj } from '../core/global';
-import { createNode, setAttribute, elContains, getAttribute, removeAttribute, isFunction } from './general';
+import { isGpcOptOutActive } from './categories';
+import { elContains } from './collections';
+import {
+    createNode,
+    getAttribute,
+    querySelectorAll,
+    removeAttribute,
+    setAttribute
+} from './dom';
+import { isFunction } from './type-guards';
 import { SCRIPT_TAG_SELECTOR, OPT_OUT_MODE } from './constants';
 
 /**
@@ -10,17 +19,15 @@ const validMimeType = type => ['text/javascript', 'module'].includes(type);
 /**
  * This function handles the loading/activation logic of the already
  * existing scripts based on the current accepted cookie categories
- *
- * @param {string[]} [defaultEnabledCategories]
  */
-export const manageExistingScripts = (defaultEnabledCategories) => {
+export const manageExistingScripts = () => {
     const {
+        _acceptedCategories,
         _acceptedServices,
         _lastChangedServices,
         _allCategoryNames,
         _allDefinedServices,
         _allScriptTags,
-        _savedCookieContent,
         _lastChangedCategoryNames,
     } = globalObj._state;
 
@@ -28,9 +35,13 @@ export const manageExistingScripts = (defaultEnabledCategories) => {
      * Automatically Enable/Disable internal services
      */
     for (const categoryName of _allCategoryNames) {
-        const lastChangedServices = _lastChangedServices[categoryName]
-            || _acceptedServices[categoryName]
-            || [];
+        const changedServices = _lastChangedServices[categoryName];
+
+        // Nothing changed (e.g. readOnly services on the first consent):
+        // check the accepted services that are not enabled yet
+        const lastChangedServices = changedServices && changedServices.length > 0
+            ? changedServices
+            : _acceptedServices[categoryName] || [];
 
         for (const serviceName of lastChangedServices) {
             const service = _allDefinedServices[categoryName][serviceName];
@@ -62,9 +73,6 @@ export const manageExistingScripts = (defaultEnabledCategories) => {
         return;
 
     const scripts = _allScriptTags;
-    const acceptedCategories = defaultEnabledCategories
-        || _savedCookieContent.categories
-        || [];
 
     /**
      * Load scripts (sequentially), using a recursive function
@@ -87,7 +95,7 @@ export const manageExistingScripts = (defaultEnabledCategories) => {
         const currScript = currScriptInfo._script;
         const currScriptCategory = currScriptInfo._categoryName;
         const currScriptService = currScriptInfo._serviceName;
-        const categoryAccepted = elContains(acceptedCategories, currScriptCategory);
+        const categoryAccepted = elContains(_acceptedCategories, currScriptCategory);
         const serviceAccepted = currScriptService
             ? elContains(_acceptedServices[currScriptCategory], currScriptService)
             : false;
@@ -137,7 +145,8 @@ export const manageExistingScripts = (defaultEnabledCategories) => {
 
             freshScript.textContent = currScript.innerHTML;
 
-            //Copy attributes over to the new "revived" script
+            // Copy attributes over to the new "revived" script; properties are
+            // preferred since some values (e.g. `nonce`) are hidden from attributes
             for (const {nodeName} of currScript.attributes) {
                 setAttribute(
                     freshScript,
@@ -196,14 +205,71 @@ export const retrieveEnabledCategoriesAndServices = () => {
     for (const categoryName of state._allCategoryNames) {
         const category = state._allDefinedCategories[categoryName];
 
-        if (category.readOnly || category.enabled) {
+        if (category.readOnly || (category.enabled && !isGpcOptOutActive())) {
             state._defaultEnabledCategories.push(categoryName);
             const services = state._allDefinedServices[categoryName] || {};
 
             for (let serviceName in services) {
                 state._enabledServices[categoryName].push(serviceName);
-                if (state._userConfig.mode === OPT_OUT_MODE) {
+                if (
+                    state._userConfig.mode === OPT_OUT_MODE
+                    && !elContains(state._acceptedServices[categoryName], serviceName)
+                ) {
                     state._acceptedServices[categoryName].push(serviceName);
+                }
+            }
+        }
+    }
+};
+
+/**
+ * Retrieves all script elements with 'data-category' attribute
+ * and save the following attributes: category-name and service
+ */
+export const retrieveScriptElements = () => {
+    if (!globalObj._config.manageScriptTags)
+        return;
+
+    const state = globalObj._state;
+
+    /**
+     * @type {NodeListOf<HTMLScriptElement>}
+     */
+    const scripts = querySelectorAll(document, 'script[' + SCRIPT_TAG_SELECTOR +']');
+
+    for (const scriptTag of scripts) {
+        let scriptCategoryName = getAttribute(scriptTag, SCRIPT_TAG_SELECTOR);
+        let scriptServiceName = scriptTag.dataset.service || '';
+        let runOnDisable = false;
+
+        /**
+         * Remove the '!' char if it is present
+         */
+        if (scriptCategoryName && scriptCategoryName.charAt(0) === '!') {
+            scriptCategoryName = scriptCategoryName.slice(1);
+            runOnDisable = true;
+        }
+
+        if (scriptServiceName.charAt(0) === '!') {
+            scriptServiceName = scriptServiceName.slice(1);
+            runOnDisable = true;
+        }
+
+        if (elContains(state._allCategoryNames, scriptCategoryName)) {
+            state._allScriptTags.push({
+                _script: scriptTag,
+                _executed: false,
+                _runOnDisable: runOnDisable,
+                _categoryName: scriptCategoryName,
+                _serviceName: scriptServiceName
+            });
+
+            if (scriptServiceName) {
+                const categoryServices = state._allDefinedServices[scriptCategoryName];
+                if (!categoryServices[scriptServiceName]) {
+                    categoryServices[scriptServiceName] = {
+                        _enabled: false
+                    };
                 }
             }
         }

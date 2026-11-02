@@ -1,10 +1,16 @@
 # CookieConsent v3
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Latest version](https://img.shields.io/github/package-json/v/orestbida/cookieconsent?color=2b4eed&label=Release)](https://github.com/orestbida/cookieconsent/releases/v3.0.0)
-[![CircleCI](https://dl.circleci.com/status-badge/img/gh/orestbida/cookieconsent.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/orestbida/cookieconsent)
+[![Latest version](https://img.shields.io/github/package-json/v/orestbida/cookieconsent?color=2b4eed&label=Release)](https://github.com/orestbida/cookieconsent/releases/tag/v3.2.1)
+[![Test](https://github.com/orestbida/cookieconsent/actions/workflows/test.yml/badge.svg)](https://github.com/orestbida/cookieconsent/actions/workflows/test.yml)
 
-A __lightweight__ & __gdpr compliant__ cookie consent plugin written in plain javascript.
+A lightweight cookie consent manager written in plain JavaScript.
+
+This is the `@0-link/cookieconsent` fork, distributed through the existing
+**private GitHub Packages** package. Upstream source and MIT attribution are retained.
+Consent configuration and correct script blocking remain the integrating application's
+responsibility; the library alone does not guarantee legal compliance.
+Maintainers: see [private release instructions](RELEASE.md) in the repository.
 
 ![CookieConsent v3 cover](demo/assets/cover.png "Cover")
 

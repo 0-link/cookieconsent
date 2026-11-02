@@ -63,6 +63,8 @@ import { COOKIE_NAME, OPT_IN_MODE } from '../utils/constants';
  * @property {HTMLElement} _pmNewBody
  * @property {HTMLElement} _pmSections
  * @property {HTMLElement} _pmFooter
+ * @property {HTMLElement} _pmBtnGroup1
+ * @property {HTMLElement} _pmBtnGroup2
  * @property {HTMLElement} _pmAcceptAllBtn
  * @property {HTMLElement} _pmAcceptNecessaryBtn
  * @property {HTMLElement} _pmSavePreferencesBtn
@@ -109,6 +111,7 @@ export class GlobalState {
             autoClearCookies: true,
             manageScriptTags: true,
             hideFromBots: true,
+            respectGpc: false,
 
             cookie: {
                 name: COOKIE_NAME,
@@ -306,8 +309,6 @@ export class GlobalState {
             _allScriptTags: []
         };
 
-        //{{START: GUI}}
-
         /**
          * Pointers to main dom elements
          * @type {DomElements}
@@ -316,8 +317,6 @@ export class GlobalState {
             _categoryCheckboxInputs: {},
             _serviceCheckboxInputs: {}
         };
-
-        //{{END: GUI}}
 
         /**
          * Callback functions

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Packed CookieConsent local QA</title>
+    <link rel="stylesheet" href="/package/dist/cookieconsent.css">
+</head>
+<body>
+    <h1>Packed CookieConsent local QA</h1>
+    <p>Local fake trackers only. Counts are actual script executions on this page, not consent flags.
+        Withdrawal persists rejection but cannot undo code already executed; reload to check the new decision.</p>
+    <fieldset id="controls" disabled>
+        <legend>Consent actions</legend>
+        <label><input id="analytics" type="checkbox"> Analytics</label>
+        <label><input id="marketing" type="checkbox"> Marketing</label>
+        <button id="selected" type="button">Accept selected</button>
+        <button id="reject" type="button">Reject optional</button>
+        <button id="preferences" type="button">Preferences</button>
+        <button id="withdraw" type="button">Withdraw optional consent</button>
+        <button id="reset" type="button">reset(false) + run</button>
+        <button id="reload" type="button">Reload page</button>
+        <button id="fresh" type="button">Clear QA choice + reload</button>
+    </fieldset>
+    <h2>Live snapshot</h2>
+    <pre id="status" aria-live="polite">Loading extracted packed dist…</pre>
+    <details>
+        <summary>Parent-controlled serving and smoke scenario</summary>
+        <p>Use an already packed release tarball, never the checkout's dist or source. From the repository root,
+            set TARBALL to its absolute path, then stage outside the repository:</p>
+        <pre>QA=/Users/yarpry/.hermes/cache/scratch/cookieconsent-update/browser-qa
+mkdir -p "$QA"
+tar -xzf "$TARBALL" -C "$QA"
+cp tests/browser/packed-consent.html "$QA/packed-consent.html"
+python3 -m http.server 8765 --bind 127.0.0.1 --directory "$QA"</pre>
+        <p>The parent launches/stops that foreground server. Open
+            <a href="http://127.0.0.1:8765/packed-consent.html">http://127.0.0.1:8765/packed-consent.html</a>.
+            The only library assets must be <code>/package/dist/cookieconsent.umd.js</code> and
+            <code>/package/dist/cookieconsent.css</code> extracted from the tarball. This fixture is under
+            tests, outside the package's dist/types files allowlist.</p>
+        <ol>
+            <li>Clear QA choice + reload: both counts are zero, consent invalid. Reject optional, open/close
+                Preferences, reload: both counts remain zero, consent valid, only necessary accepted.</li>
+            <li>Clear QA choice + reload. Check only Analytics, Accept selected: analytics 1, marketing 0.
+                Preferences must show only Analytics selected among optional categories. Close it without saving.</li>
+            <li>reset(false) + run retains the saved choice and page counts 1/0. Reload:
+                analytics executes once on the new page, marketing stays zero, consent stays valid.</li>
+            <li>Withdraw optional consent: necessary only, current page counts still 1/0. Reload:
+                both zero and necessary only. Preferences must not reactivate either tracker.</li>
+            <li>Clear QA choice + reload and repeat with only Marketing: counts 0/1. Accepting the same
+                selection twice must not increment it again. Clear QA choice when finished.</li>
+        </ol>
+        <p>For automation inspect <code>window.qa.snapshot()</code>; wait until its <code>ready</code> is true.
+            No network pixels, fetches, timers, or tracker cookies are used. CSP blocks network connections and images.</p>
+    </details>
+
+    <script>
+        window.qa = { ready: false, counts: { analytics: 0, marketing: 0 } };
+    </script>
+    <script type="text/plain" data-category="analytics">window.qa.counts.analytics += 1;</script>
+    <script type="text/plain" data-category="marketing">window.qa.counts.marketing += 1;</script>
+    <script src="/package/dist/cookieconsent.umd.js"></script>
+    <script>
+        const controls = document.querySelector('#controls');
+        const status = document.querySelector('#status');
+        const api = window.CookieConsent;
+        const render = () => { status.textContent = JSON.stringify(window.qa.snapshot(), null, 2); };
+
+        window.qa.snapshot = () => ({
+            ready: window.qa.ready,
+            counts: { ...window.qa.counts },
+            validConsent: api ? api.validConsent() : false,
+            acceptedCategories: api ? api.getUserPreferences().acceptedCategories : [],
+            cookieStored: document.cookie.split(';').some(value => value.trim().startsWith('cc_packed_qa=')),
+            preferencesVisible: document.documentElement.classList.contains('show--preferences')
+        });
+
+        const createConfig = () => ({
+            mode: 'opt-in',
+            autoShow: false,
+            hideFromBots: false,
+            manageScriptTags: true,
+            cookie: { name: 'cc_packed_qa', domain: '', secure: false, path: '/' },
+            categories: {
+                necessary: { enabled: true, readOnly: true },
+                analytics: { enabled: false },
+                marketing: { enabled: false }
+            },
+            onConsent: render,
+            onChange: render,
+            language: {
+                default: 'en',
+                translations: {
+                    en: {
+                        consentModal: {
+                            title: 'Local consent QA',
+                            description: 'Only local execution counters are used.',
+                            acceptAllBtn: 'Accept all',
+                            acceptNecessaryBtn: 'Reject optional',
+                            showPreferencesBtn: 'Preferences'
+                        },
+                        preferencesModal: {
+                            title: 'Local QA preferences',
+                            acceptAllBtn: 'Accept all',
+                            acceptNecessaryBtn: 'Reject optional',
+                            savePreferencesBtn: 'Save selected',
+                            closeIconLabel: 'Close',
+                            sections: [
+                                { title: 'Necessary', linkedCategory: 'necessary' },
+                                { title: 'Analytics fake tracker', linkedCategory: 'analytics' },
+                                { title: 'Marketing fake tracker', linkedCategory: 'marketing' }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+
+        const actions = {
+            selected: () => api.acceptCategory(['analytics', 'marketing'].filter(category => document.getElementById(category).checked)),
+            reject: () => api.acceptCategory([]),
+            preferences: () => api.showPreferences(),
+            withdraw: () => api.acceptCategory([]),
+            reset: async () => {
+                api.reset(false);
+                await api.run(createConfig());
+            },
+            reload: () => location.reload(),
+            fresh: () => {
+                api.reset(true);
+                location.reload();
+            }
+        };
+
+        for (const [id, action] of Object.entries(actions)) {
+            document.getElementById(id).addEventListener('click', async () => {
+                controls.disabled = true;
+                try {
+                    await action();
+                    render();
+                } catch (error) {
+                    status.textContent = String(error);
+                } finally {
+                    controls.disabled = false;
+                }
+            });
+        }
+
+        for (const event of ['cc:onModalShow', 'cc:onModalHide']) {
+            window.addEventListener(event, render);
+        }
+
+        (async () => {
+            try {
+                if (!api) throw new Error('Missing extracted /package/dist/cookieconsent.umd.js');
+                await api.run(createConfig());
+                window.qa.ready = true;
+                controls.disabled = false;
+                render();
+            } catch (error) {
+                status.textContent = String(error);
+            }
+        })();
+    </script>
+</body>
+</html>

@@ -98,29 +98,24 @@ jobs:
           if (digest !== process.env.TARBALL_SHA256) throw new Error('Validated tarball changed');
 
           // Preserve the existing private package; never create one or change access.
-          // Listing must succeed: an API permission/network error is never "not found".
-          let existing;
-          for (let page = 1; ; page++) {
-            const response = await fetch(
-              `https://api.github.com/orgs/0-link/packages?package_type=npm&per_page=100&page=${page}`,
-              { headers: {
-                Accept: 'application/vnd.github+json',
-                Authorization: `Bearer ${process.env.NODE_AUTH_TOKEN}`,
-                'X-GitHub-Api-Version': '2022-11-28'
-              }}
-            );
-            if (!response.ok) throw new Error(`Package access check failed: HTTP ${response.status}`);
-            const packages = await response.json();
-            if (!Array.isArray(packages)) throw new Error('Invalid package access response');
-            existing = packages.find(pkg => pkg.name === 'cookieconsent' || pkg.name === name);
-            if (existing || packages.length < 100) break;
+          // Query only this package; an API permission/network error is never "not found".
+          const response = await fetch(
+            'https://api.github.com/orgs/0-link/packages/npm/cookieconsent',
+            { method: 'GET', headers: {
+              Accept: 'application/vnd.github+json',
+              Authorization: `Bearer ${process.env.NODE_AUTH_TOKEN}`,
+              'X-GitHub-Api-Version': '2022-11-28'
+            }}
+          );
+          if (!response.ok) throw new Error(`Package access check failed: HTTP ${response.status}`);
+          const existing = await response.json();
+          if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+            throw new Error('Invalid package access response');
           }
-          if (!existing) {
-            throw new Error('Existing package is missing or inaccessible; refusing to create a package');
-          }
-          if (existing.visibility !== 'private' ||
+          if ((existing.name !== 'cookieconsent' && existing.name !== name) ||
+              existing.visibility !== 'private' ||
               existing.repository?.full_name !== '0-link/cookieconsent') {
-            throw new Error('Existing package must be PRIVATE and linked to 0-link/cookieconsent');
+            throw new Error('Existing package must be cookieconsent, PRIVATE and linked to 0-link/cookieconsent');
           }
 
           const view = spawnSync('npm', [

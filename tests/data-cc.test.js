@@ -1,5 +1,5 @@
 import * as CookieConsent from "../src/index"
-import { getKeys } from "../src/utils/general";
+import { getKeys } from "../src/utils/collections";
 import testConfig from "./config/full-config";
 import { fireClickEvent, htmlHasClass } from "./config/mocks-utils";
 
@@ -42,6 +42,17 @@ describe("Test data-cc attributes", () => {
     it('Should show the preferences modal onClick', () => {
         const showPreferencesBtn = document.querySelector('button[data-cc="show-preferencesModal"]');
         fireClickEvent(showPreferencesBtn)
+        expect(htmlHasClass('show--preferences')).toBe(true);
+    })
+
+    it('Should remove the show preferences modal listeners on reset', async () => {
+        const showPreferencesBtn = document.querySelector('button[data-cc="show-preferencesModal"]');
+
+        api.reset(true);
+        fireClickEvent(showPreferencesBtn);
+
+        await api.run(testConfig);
+        fireClickEvent(showPreferencesBtn);
         expect(htmlHasClass('show--preferences')).toBe(true);
     })
 

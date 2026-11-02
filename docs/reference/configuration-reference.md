@@ -106,6 +106,18 @@ Stops the plugin's execution when a bot/crawler is detected, to prevent them fro
 - **Default**: `true`
 
 
+## respectGpc
+
+Honors the browser's [Global Privacy Control](https://globalprivacycontrol.org/) signal (`navigator.globalPrivacyControl`). Until the user makes a choice:
+- categories marked as [`enabled`](#category-enabled) are treated as disabled, so their scripts don't run in `opt-out` mode
+- the consent modal is not shown automatically; you can still open it via `show()` or `showPreferences()`
+
+No cookie is set and no consent callback is fired because of the signal alone. Once the user makes a choice, it always takes precedence over the signal.
+
+- **Type**: `boolean`
+- **Default**: `false`
+
+
 ## disablePageInteraction
 
 Creates a dark overlay and blocks the page scroll until consent is expressed.
@@ -159,6 +171,8 @@ Customize the plugin's cookie.
 ### cookie.domain
 
 Current domain/subdomain's name, retrieved automatically.
+
+Set it to an empty string to leave out the `Domain` attribute, so that the cookie is only available on the current host and not on its subdomains.
 
 - **Type**: `string`
 - **Default**: `window.location.hostname`
@@ -531,6 +545,11 @@ Mark the category as enabled by default.
 
 - **Type**: `boolean`
 - **Default**: `false`
+- **Details**:
+
+    The category's toggle is pre-selected in the preferences modal, but the category is not accepted until the user makes a choice: [acceptedCategory](/reference/api-reference.html#acceptedcategory) returns `false` until then.
+
+    In `opt-in` mode (default), its scripts only run after the user accepts the category. In `opt-out` mode, they run right away. See [mode](#mode).
 - **Example**: <br>
     ```javascript
     CookieConsent.run({
@@ -721,7 +740,7 @@ Set the current language dynamically.
 - **Values**: `'document'`, `'browser'`
 - **Details**: <br>
     - `'document'`: retrieve language from the `lang` attribute (e.g. `<html lang="en-US">`)
-    - `'browser'`: retrieve the user's browser language via `navigator.language`
+    - `'browser'`: use the first of the user's preferred browser languages (`navigator.languages`) that has a translation
 
     ::: info
     The detected language will be used only if a valid translation is defined, otherwise the plugin will fallback to the `default` language.

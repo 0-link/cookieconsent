@@ -1,22 +1,23 @@
 import { globalObj } from '../global';
 
+import { addDataButtonListeners } from '../../utils/data-buttons';
+import { debug } from '../../utils/debug';
 import {
-    debug,
-    createNode,
     addClass,
     addClassCm,
-    setAttribute,
-    appendChild,
     addEvent,
-    getModalFocusableData,
-    addDataButtonListeners,
-    getSvgIcon,
-    handleFocusTrap,
-    fireEvent
-} from '../../utils/general';
+    appendChild,
+    createNode,
+    removeClass,
+    setAttribute
+} from '../../utils/dom';
+import { fireEvent } from '../../utils/events';
+import { getModalFocusableData, handleFocusTrap } from '../../utils/focus-trap';
+import { getSvgIcon } from '../../utils/svg-icons';
 
 import {
     CONSENT_MODAL_NAME,
+    ARIA_HIDDEN,
     DIV_TAG,
     BUTTON_TAG,
     BTN_GROUP_CLASS,
@@ -91,15 +92,19 @@ export const createConsentModal = (api, createMainContainer) => {
         addClassCm(dom._cmTexts, 'texts');
         addClassCm(dom._cmBtns, 'btns');
 
-        setAttribute(dom._cm, 'role', 'dialog');
-        setAttribute(dom._cm, 'aria-modal', 'true');
-        setAttribute(dom._cm, 'aria-describedby', 'cm__desc');
+        setAttribute(dom._cm, ARIA_HIDDEN, 'true');
 
-        if (consentModalLabelValue)
-            setAttribute(dom._cm, 'aria-label', consentModalLabelValue);
-        else if (consentModalTitleValue)
+        if (state._disablePageInteraction) {
+            setAttribute(dom._cm, 'role', 'dialog');
+            setAttribute(dom._cm, 'aria-modal', 'true');
+        } else {
+            setAttribute(dom._cm, 'role', 'region');
+        }
+
+        if (!consentModalLabelValue && consentModalTitleValue) {
             setAttribute(dom._cm, 'aria-labelledby', 'cm__title');
-
+            setAttribute(dom._cm, 'aria-describedby', 'cm__desc');
+        }
         const
             boxLayout = 'box',
             guiOptions = state._userConfig.guiOptions,
@@ -122,22 +127,21 @@ export const createConsentModal = (api, createMainContainer) => {
                 });
                 appendChild(dom._cmBody, dom._cmCloseIconBtn);
             }
-
-            setAttribute(dom._cmCloseIconBtn, 'aria-label', closeIconLabelData);
         }
 
         appendChild(dom._cmBody, dom._cmTexts);
 
-        if (acceptAllBtnData || acceptNecessaryBtnData || showPreferencesBtnData)
-            appendChild(dom._cmBody, dom._cmBtns);
-
-        dom._cmDivTabindex = createNode(DIV_TAG);
-        setAttribute(dom._cmDivTabindex, 'tabIndex', -1);
-        appendChild(dom._cm, dom._cmDivTabindex);
-
         appendChild(dom._cm, dom._cmBody);
         appendChild(dom._cmContainer, dom._cm);
+
+        dom._cmDivTabindex = dom._cm;
+        setAttribute(dom._cmDivTabindex, 'tabIndex', -1);
     }
+
+    consentModalLabelValue && setAttribute(dom._cm, 'aria-label', consentModalLabelValue);
+
+    if (dom._cmCloseIconBtn && closeIconLabelData)
+        setAttribute(dom._cmCloseIconBtn, 'aria-label', closeIconLabelData);
 
     if (consentModalTitleValue) {
         if (!dom._cmTitle) {
@@ -209,6 +213,7 @@ export const createConsentModal = (api, createMainContainer) => {
             addClassCm(dom._cmShowPreferencesBtn, 'btn');
             addClassCm(dom._cmShowPreferencesBtn, 'btn--secondary');
             setAttribute(dom._cmShowPreferencesBtn, DATA_ROLE, 'show');
+            setAttribute(dom._cmShowPreferencesBtn, 'aria-haspopup', 'dialog');
 
             addEvent(dom._cmShowPreferencesBtn, 'mouseenter', () => {
                 if (!state._preferencesModalExists)
@@ -221,28 +226,30 @@ export const createConsentModal = (api, createMainContainer) => {
     }
 
     if (!dom._cmBtnGroup) {
-        dom._cmBtnGroup = createNode(DIV_TAG);
-        addClassCm(dom._cmBtnGroup, BTN_GROUP_CLASS);
-
-        acceptAllBtnData && appendChild(dom._cmBtnGroup, dom._cmAcceptAllBtn);
-        acceptNecessaryBtnData && appendChild(dom._cmBtnGroup, dom._cmAcceptNecessaryBtn);
-
-        (acceptAllBtnData || acceptNecessaryBtnData) && appendChild(dom._cmBody, dom._cmBtnGroup);
+        dom._cmBtnGroup = createNode(DIV_TAG, 'cm__' + BTN_GROUP_CLASS);
         appendChild(dom._cmBtns, dom._cmBtnGroup);
     }
 
-    if (dom._cmShowPreferencesBtn && !dom._cmBtnGroup2) {
-        dom._cmBtnGroup2 = createNode(DIV_TAG);
+    dom._cmAcceptAllBtn && appendChild(dom._cmBtnGroup, dom._cmAcceptAllBtn);
+    dom._cmAcceptNecessaryBtn && appendChild(dom._cmBtnGroup, dom._cmAcceptNecessaryBtn);
 
-        if ((!dom._cmAcceptNecessaryBtn || !dom._cmAcceptAllBtn)) {
+    if (dom._cmShowPreferencesBtn) {
+        if (!dom._cmAcceptNecessaryBtn || !dom._cmAcceptAllBtn) {
             appendChild(dom._cmBtnGroup, dom._cmShowPreferencesBtn);
             addClassCm(dom._cmBtnGroup, BTN_GROUP_CLASS + '--uneven');
-        }else {
-            addClassCm(dom._cmBtnGroup2, BTN_GROUP_CLASS);
+        } else {
+            if (!dom._cmBtnGroup2) {
+                dom._cmBtnGroup2 = createNode(DIV_TAG, 'cm__' + BTN_GROUP_CLASS);
+                appendChild(dom._cmBtns, dom._cmBtnGroup2);
+            }
+
+            removeClass(dom._cmBtnGroup, 'cm__' + BTN_GROUP_CLASS + '--uneven');
             appendChild(dom._cmBtnGroup2, dom._cmShowPreferencesBtn);
-            appendChild(dom._cmBtns, dom._cmBtnGroup2);
         }
     }
+
+    if (dom._cmAcceptAllBtn || dom._cmAcceptNecessaryBtn || dom._cmShowPreferencesBtn)
+        appendChild(dom._cmBody, dom._cmBtns);
 
     if (footerData) {
         if (!dom._cmFooterLinksGroup) {
@@ -270,7 +277,7 @@ export const createConsentModal = (api, createMainContainer) => {
         debug('CookieConsent [HTML] created', CONSENT_MODAL_NAME);
 
         fireEvent(globalObj._customEvents._onModalReady, CONSENT_MODAL_NAME, dom._cm);
-        createMainContainer(api);
+        createMainContainer();
         appendChild(dom._ccMain, dom._cmContainer);
         handleFocusTrap(dom._cm);
     }

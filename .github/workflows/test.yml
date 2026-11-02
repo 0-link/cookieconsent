@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Enable the pinned package manager
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.17.0 --activate
+          test "$(corepack pnpm --version)" = "11.17.0"
+
+      - name: Install without lifecycle scripts
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Lint
+        run: corepack pnpm lint
+
+      - name: Test
+        run: corepack pnpm test
+
+      - name: Build
+        run: corepack pnpm build
+
+      - name: Exercise validator rejection cases
+        run: node scripts/package-preflight.mjs --self-test
+
+      - name: Validate the actual package tarball
+        run: node scripts/package-preflight.mjs
+        env:
+          PACK_DIR: ${{ runner.temp }}/cookieconsent-pack

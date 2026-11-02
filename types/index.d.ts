@@ -200,7 +200,8 @@ declare namespace CookieConsent {
         name?: string
 
         /**
-         * Cookie domain.
+         * Cookie domain. Set to an empty string to leave out
+         * the `Domain` attribute (cookie not shared with subdomains).
          *
          * @default location.hostname
          */
@@ -449,6 +450,16 @@ declare namespace CookieConsent {
          * @default true
          */
         hideFromBots?: boolean
+
+        /**
+         * Honor the browser's Global Privacy Control signal (`navigator.globalPrivacyControl`).
+         * Until the user makes a choice, categories marked as `enabled` are treated as disabled
+         * and the consent modal is not shown automatically. No cookie is set and no consent
+         * callback is fired because of the signal alone; a saved choice always takes precedence.
+         *
+         * @default false
+         */
+        respectGpc?: boolean
 
         /**
          * Tweak some UI options.

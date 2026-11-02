@@ -1,5 +1,9 @@
 import { globalObj } from './global';
-import { debug, getKeys, isObject, isString, retrieveScriptElements, fetchCategoriesAndServices } from '../utils/general';
+import { fetchCategoriesAndServices } from '../utils/categories';
+import { getKeys } from '../utils/collections';
+import { debug } from '../utils/debug';
+import { retrieveScriptElements } from '../utils/scripts';
+import { isObject, isString } from '../utils/type-guards';
 import { OPT_OUT_MODE } from '../utils/constants';
 import { resolveCurrentLanguageCode, setCurrentLanguageCode } from '../utils/language';
 
@@ -16,8 +20,8 @@ export const setConfig = (userConfig) => {
         { cookie } = config,
         callbacks = globalObj._callbacks,
         userCookieConfig = userConfig.cookie,
-        userCategories = userConfig.categories,
-        allCategoryNames = getKeys(userCategories) || [],
+        userCategories = userConfig.categories || {},
+        allCategoryNames = getKeys(userCategories),
         nav = navigator,
         doc = document;
 
@@ -69,6 +73,7 @@ export const setConfig = (userConfig) => {
         revision,
         manageScriptTags,
         hideFromBots,
+        respectGpc
     } = userConfig;
 
     if (mode === OPT_OUT_MODE)
@@ -100,6 +105,9 @@ export const setConfig = (userConfig) => {
 
     if (config.hideFromBots === true && nav)
         state._botAgentDetected = (nav.userAgent && /bot|crawl|spider|slurp|teoma/i.test(nav.userAgent)) || nav.webdriver;
+
+    if (typeof respectGpc === 'boolean')
+        config.respectGpc = respectGpc;
 
     if (isObject(userCookieConfig))
         config.cookie = {...cookie, ...userCookieConfig};
